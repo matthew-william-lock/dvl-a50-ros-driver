@@ -1,63 +1,68 @@
-#!/usr/bin/env python
-import socket
-import json
+#!/usr/bin/env python3
+
 import rospy
-from time import sleep
-from std_msgs.msg import String
+
 from waterlinked_a50_ros_driver.msg import DVL
 from waterlinked_a50_ros_driver.msg import DVLBeam
+
+from std_srvs.srv import SetBool
+from std_srvs.srv import SetBoolResponse
+from std_srvs.srv import SetBoolRequest
+
+from std_msgs.msg import String
+from std_msgs.msg import Float64
+from std_msgs.msg import Bool 
+
+import socket
+import json
+from time import sleep
 import select
 
-def connect():
-	global s, TCP_IP, TCP_PORT
-	try:
-		s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		s.connect((TCP_IP, TCP_PORT))
-		s.settimeout(1)
-	except socket.error as err:
-		rospy.logerr("No route to host, DVL might be booting? {}".format(err))
-		sleep(1)
-		connect()
+class DVLDriver(object):
+    
+	def __init__(self):
+		
+		self.dvl_frame = rospy.get_param('~dvl_frame', 'sam/dvl_link')
+		self.dvl_topic = rospy.get_param('~dvl_topic', '/sam/core/dvl')
+		self.dvl_ctrl_srv = rospy.get_param('~dvl_on_off_srv', 'core/toggle_dvl')
+		self.dvl_raw_topic = rospy.get_param('~dvl_raw_topic', 'dvl_raw_output')
+  
+		self.pub_raw = rospy.Publisher( self.dvl_raw_topic, String, queue_size=10)
 
-oldJson = ""
-
-theDVL = DVL()
-beam0 = DVLBeam()
-beam1 = DVLBeam()
-beam2 = DVLBeam()
-beam3 = DVLBeam()
-
-def getData():
-	global oldJson, s
-	raw_data = ""
-
-	while not '\n' in raw_data:
-		try:
-			rec = s.recv(1) # Add timeout for that
-			if len(rec) == 0:
-				rospy.logerr("Socket closed by the DVL, reopening")
-				connect()
-				continue
-		except socket.timeout as err:
-			rospy.logerr("Lost connection with the DVL, reinitiating the connection: {}".format(err))
-			connect()
-			continue
-		raw_data = raw_data + rec
-	raw_data = oldJson + raw_data
-	oldJson = ""
-	raw_data = raw_data.split('\n')
-	oldJson = raw_data[1]
-	raw_data = raw_data[0]
-	return raw_data
-
-
-def publisher():
-	pub_raw = rospy.Publisher('dvl/json_data', String, queue_size=10)
-	pub = rospy.Publisher('dvl/data', DVL, queue_size=10)
-
-	rate = rospy.Rate(10) # 10hz
-	while not rospy.is_shutdown():
-		raw_data = getData()
+		# Waterlinked parameters
+		self.TCP_IP = rospy.get_param("~ip", "10.42.0.186")
+		self.TCP_PORT = rospy.get_param("~port", 16171)
+		self.do_log_raw_data = rospy.get_param("~do_log_raw_data", False)    
+  
+		# Waterlinked variables
+		self.s = None
+		self.dvl_on = False
+		self.oldJson = ""
+  
+  		# Topics for debugging
+		self.dvl_en_pub = rospy.Publisher('dvl_enable', Bool, queue_size=10)
+  
+		# Service to start/stop DVL and DVL data publisher
+		self.switch_srv = rospy.Service(self.dvl_ctrl_srv, SetBool, self.dvl_switch_cb) 
+		self.dvl_pub = rospy.Publisher(self.dvl_topic, DVL, queue_size=10)
+  
+		rate = rospy.Rate(10) # 10hz
+		while not rospy.is_shutdown():
+			if self.dvl_on:
+				self.receive_dvl()
+			rate.sleep()
+   
+		self.close()
+   
+	def receive_dvl(self):
+     
+		theDVL = DVL()
+		beam0 = DVLBeam()
+		beam1 = DVLBeam()
+		beam2 = DVLBeam()
+		beam3 = DVLBeam()
+  
+		raw_data = self.getData()
 		data = json.loads(raw_data)
 
 		# edit: the logic in the original version can't actually publish the raw data
@@ -65,18 +70,18 @@ def publisher():
 		# do_log_raw_data is true: publish the raw data to /dvl/json_data topic, fill in theDVL using velocity data and publish to dvl/data topic
 		# do_log_raw_data is true: only fill in theDVL using velocity data and publish to dvl/data topic
 
-		if do_log_raw_data:
+		if self.do_log_raw_data:
 			rospy.loginfo(raw_data)
-			pub_raw.publish(raw_data)
+			self.pub_raw.publish(raw_data)
 			if data["type"] != "velocity":
-				continue
+				return
 		else:
 			if data["type"] != "velocity":
-				continue
-			pub_raw.publish(raw_data)
+				return
+			self.pub_raw.publish(raw_data)
 
 		theDVL.header.stamp = rospy.Time.now()
-		theDVL.header.frame_id = "dvl_link"
+		theDVL.header.frame_id = self.dvl_frame
 		theDVL.time = data["time"]
 		theDVL.velocity.x = data["vx"]
 		theDVL.velocity.y = data["vy"]
@@ -116,19 +121,79 @@ def publisher():
 		beam3.valid = data["transducers"][3]["beam_valid"]
 
 		theDVL.beams = [beam0, beam1, beam2, beam3]
+  
+		self.dvl_pub.publish(theDVL)
+        
+	def dvl_switch_cb(self, switch_msg : SetBoolRequest):
+		res = SetBoolResponse()
+  
+		if switch_msg.data:
+			res.success = self.connect()
+			res.message = "Connected" if res.success else "Couldn't connect"
+		else:
+			res.success = self.close()
+			res.message = "Disconnected" if res.success else "Couldn't disconnect"
+   
+		if res.success == True:
+			self.dvl_on = switch_msg.data
+		
+		self.dvl_en_pub.publish(Bool(self.dvl_on))
+		return res 
+        
 
-		pub.publish(theDVL)
+	def connect(self) -> bool:
+		"""
+		Connect to the DVL
+		"""	
+		try:
+			self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+			self.s.connect((self.TCP_IP, self.TCP_PORT))
+			self.s.settimeout(1)
+			return True
+		except socket.error as err:
+			rospy.logerr("No route to host, DVL might be booting? {}".format(err))
+			return False
+			# sleep(1)
+			# self.connect()
+   
+	def close(self) -> bool:
+		"""
+		Close the connection to the DVL
+		"""
+  
+		try:
+			self.s.close()
+			return True
+		except Exception as e:
+			rospy.logerr("No route to host, DVL might be booting? {}".format(e))
+			return False
 
-		rate.sleep()
+	def getData(self):
+		raw_data = ""
+
+		while not '\n' in raw_data:
+			try:
+				rec = self.s.recv(1) # Add timeout for that
+				if len(rec) == 0:
+					rospy.logerr("Socket closed by the DVL, reopening")
+					self.connect()
+					continue
+			except socket.timeout as err:
+				rospy.logerr("Lost connection with the DVL, reinitiating the connection: {}".format(err))
+				self.connect()
+				continue
+			raw_data = raw_data + rec
+		raw_data = self.oldJson + raw_data
+		self.oldJson = ""
+		raw_data = raw_data.split('\n')
+		self.oldJson = raw_data[1]
+		raw_data = raw_data[0]
+		return raw_data
 
 if __name__ == '__main__':
-	global s, TCP_IP, TCP_PORT, do_log_raw_data
-	rospy.init_node('a50_pub', anonymous=False)
-	TCP_IP = rospy.get_param("~ip", "10.42.0.186")
-	TCP_PORT = rospy.get_param("~port", 16171)
-	do_log_raw_data = rospy.get_param("~do_log_raw_data", False)
-	connect()
-	try:
-		publisher()
-	except rospy.ROSInterruptException:
-		s.close()
+    
+    rospy.init_node('DVLDriver')
+    try:
+        DVLDriver()
+    except rospy.ROSInterruptException:
+        pass

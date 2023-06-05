@@ -1,7 +1,23 @@
 <?xml version="1.0"?>
 <launch>
-    <node pkg="waterlinked-dvl" type="publisher.py" name="publisher">
-        <param name="ip" value="192.168.69.20"/>
-        <param name="port" value="16171"/>
-    </node>
+
+    <arg name="robot_name" default="sam"/>
+
+    <group ns="$(arg robot_name)">
+
+        <node pkg="waterlinked-dvl" type="publisher.py" name="publisher">
+
+            <param name="dvl_topic" value="/$(arg robot_name)/core/dvl"/>
+            <param name="dvl_raw_topic" value="/$(arg robot_name)/core/dvl_raw_output"/>
+            <param name="dvl_frame" value="$(arg robot_name)/dvl_link"/>
+            <param name="dvl_on_off_srv" value="/$(arg robot_name)/core/toggle_dvl"/>
+
+            <param name="ip" value="192.168.69.20"/>
+            <param name="port" value="16171"/>
+
+        </node>
+
+    </group>
+
+
 </launch>
