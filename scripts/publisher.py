@@ -46,6 +46,10 @@ class DVLDriver(object):
 		self.switch_srv = rospy.Service(self.dvl_ctrl_srv, SetBool, self.dvl_switch_cb) 
 		self.dvl_pub = rospy.Publisher(self.dvl_topic, DVL, queue_size=10)
   
+		# Connect to the DVL and turn it off
+		if self.connect():
+			self.set_config(acoustic_enabled="n")
+  
 		rate = rospy.Rate(10) # 10hz
 		while not rospy.is_shutdown():
 			if self.dvl_on:
@@ -131,7 +135,8 @@ class DVLDriver(object):
 			res.success = self.connect()
 			res.message = "Connected" if res.success else "Couldn't connect"
 		else:
-			res.success = self.close()
+			# res.success = self.close()
+			self.set_config(acoustic_enabled="n")
 			res.message = "Disconnected" if res.success else "Couldn't disconnect"
    
 		if res.success == True:
@@ -189,6 +194,52 @@ class DVLDriver(object):
 		self.oldJson = raw_data[1]
 		raw_data = raw_data[0]
 		return raw_data
+
+	def set_config(self,
+		speed_of_sound = None,
+		mounting_rotation_offset = None,
+		acoustic_enabled = None,
+		dark_mode_enabled = None, 
+		range_mode = None):
+     
+		"""
+		Set the configuration of the DVL
+  
+		Values not set will be left blank and will not be changed
+		"""
+  
+  		# Validate input
+		valid_input = True
+		if speed_of_sound is not None and (speed_of_sound < 0 ):
+			rospy.logerr("Invalid speed of sound")
+			valid_input = False
+		if mounting_rotation_offset is not None and (mounting_rotation_offset < 0 or mounting_rotation_offset > 360):
+			rospy.logerr("Invalid mounting rotation offset")
+			valid_input = False
+		if acoustic_enabled is not None and (acoustic_enabled != "y" and acoustic_enabled != "n"):
+			rospy.logerr("Invalid acoustic enabled value")
+			valid_input = False 
+		if dark_mode_enabled is not None and (dark_mode_enabled != "y" and dark_mode_enabled != "n"):
+			rospy.logerr("Invalid dark mode enabled value")
+			valid_input = False
+		if range_mode is not None and (range_mode != "auto"):
+			rospy.logerr("Invalid range mode")
+			valid_input = False
+   
+		if not valid_input:
+			return False
+     
+		paramaters = [speed_of_sound, mounting_rotation_offset, acoustic_enabled, dark_mode_enabled, range_mode]
+		command_string = "wcs"
+		for i, val in enumerate(paramaters):
+      
+			command_string +=","
+			command_string+= str(val) if val is not None else ""
+   
+		command_string += "\n"
+
+		rospy.loginfo("Sending command: {}".format(command_string))
+		self.s.send(command_string.encode())
 
 if __name__ == '__main__':
     
