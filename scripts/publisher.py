@@ -47,6 +47,7 @@ class DVLDriver(object):
 		self.dvl_pub = rospy.Publisher(self.dvl_topic, DVL, queue_size=10)
   
 		# Connect to the DVL and turn it off
+		rospy.loginfo("Turning off DVL")
 		if self.connect():
 			self.set_config(acoustic_enabled="n")
   
@@ -129,6 +130,9 @@ class DVLDriver(object):
 		self.dvl_pub.publish(theDVL)
         
 	def dvl_switch_cb(self, switch_msg : SetBoolRequest):
+
+		rospy.loginfo("Service call")
+
 		res = SetBoolResponse()
   
 		if switch_msg.data:
@@ -150,16 +154,21 @@ class DVLDriver(object):
 		"""
 		Connect to the DVL
 		"""	
+
+		rospy.loginfo("Trying to connec to DVL")
+		return_val = False
+
 		try:
 			self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 			self.s.connect((self.TCP_IP, self.TCP_PORT))
 			self.s.settimeout(1)
-			return True
+			return_val = True
 		except socket.error as err:
 			rospy.logerr("No route to host, DVL might be booting? {}".format(err))
-			return False
 			# sleep(1)
 			# self.connect()
+
+		return return_val
    
 	def close(self) -> bool:
 		"""
@@ -174,9 +183,9 @@ class DVLDriver(object):
 			return False
 
 	def getData(self):
-		raw_data = ""
+		raw_data = b''
 
-		while not '\n' in raw_data:
+		while not b'\n' in raw_data:
 			try:
 				rec = self.s.recv(1) # Add timeout for that
 				if len(rec) == 0:
@@ -188,8 +197,9 @@ class DVLDriver(object):
 				self.connect()
 				continue
 			raw_data = raw_data + rec
+		raw_data = raw_data.decode("utf-8") 
 		raw_data = self.oldJson + raw_data
-		self.oldJson = ""
+		self.oldJson = ''
 		raw_data = raw_data.split('\n')
 		self.oldJson = raw_data[1]
 		raw_data = raw_data[0]
@@ -242,9 +252,9 @@ class DVLDriver(object):
 		self.s.send(command_string.encode())
 
 if __name__ == '__main__':
-    
-    rospy.init_node('DVLDriver')
-    try:
-        DVLDriver()
-    except rospy.ROSInterruptException:
-        pass
+	rospy.init_node('DVLDriver')
+	rospy.loginfo('Starting DVL driver')
+	try:
+		DVLDriver()
+	except rospy.ROSInterruptException:
+		pass
