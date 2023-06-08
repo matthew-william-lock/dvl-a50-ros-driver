@@ -91,13 +91,13 @@ class DVLDriver(object):
 		theDVL.header.stamp = rospy.Time.now()
 		theDVL.header.frame_id = self.dvl_frame
 
-		self.dvl_out.velocity.x = data["vx"]
-		self.dvl_out.velocity.y = data["vy"]
-		self.dvl_out.velocity.z = data["vz"]
-		self.dvl_out.velocity_covariance[0] = data["covariance"][0]
-		self.dvl_out.velocity_covariance[4] = data["covariance"][4]
-		self.dvl_out.velocity_covariance[8] = data["covariance"][8]
-		self.dvl_out.altitude = data["altitude"]
+		theDVL.velocity.x = data["vx"]
+		theDVL.velocity.y = data["vy"]
+		theDVL.velocity.z = data["vz"]
+		theDVL.velocity_covariance[0] = data["covariance"][0][0]
+		theDVL.velocity_covariance[4] = data["covariance"][1][1]
+		theDVL.velocity_covariance[8] = data["covariance"][2][2]
+		theDVL.altitude = data["altitude"]
 
 		# Todo : Add beam covariances (not available for waterlinked)
 
