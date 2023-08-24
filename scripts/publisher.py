@@ -43,9 +43,6 @@ class DVLDriver(object):
 		self.s = None
 		self.dvl_on = False
 		self.oldJson = ""
-
-		self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		self.s.settimeout(1)
   
   		# Topics for debugging
 		self.dvl_en_pub = rospy.Publisher('dvl_enable', Bool, queue_size=10)
@@ -56,10 +53,10 @@ class DVLDriver(object):
 		self.switch = False
   
 		# Connect to the DVL and turn it off
-		rospy.loginfo("[DVL Driver] Turning off DVL")
-		if self.connect():
-			self.set_config(acoustic_enabled="n")
-  
+		while not self.connect():
+			rospy.logerr("Coud not connect, retrying in 5 seconds...")
+			rospy.sleep(5)
+
 		rate = rospy.Rate(10) # 10hz
 		while not rospy.is_shutdown():
 			if self.dvl_on:
@@ -172,13 +169,14 @@ class DVLDriver(object):
 		self.switch = True
 
 		res = SetBoolResponse()
+		self.dvl_on = switch_msg.data		
   
 		if switch_msg.data:
 			self.send_relay_msg(relay=True)
 		else:
 			self.send_relay_msg(relay=False)
+			self.close()
 
-		self.dvl_on = switch_msg.data		
 		self.dvl_en_pub.publish(Bool(self.dvl_on))
 
 		res.success = True
@@ -187,10 +185,13 @@ class DVLDriver(object):
 		return res 
         
 
-	def connect(self, force = False) -> bool:
+	def connect(self) -> bool:
 		"""
 		Connect to the DVL
 		"""	
+
+		self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		self.s.settimeout(2)
 
 		rospy.loginfo("[DVL Driver] Trying to connect to DVL")
 		return_val = False
@@ -201,8 +202,6 @@ class DVLDriver(object):
 			rospy.loginfo("[DVL Driver] Successfully connected")
 		except socket.error as err:
 			rospy.logerr("No route to host, DVL might be booting? {}".format(err))
-			rospy.sleep(2)
-			self.connect()
 
 		return return_val
 	
@@ -235,13 +234,16 @@ class DVLDriver(object):
 				rec = self.s.recv(1) # Add timeout for that
 				if len(rec) == 0:
 					rospy.logerr("Socket closed by the DVL, reopening")
-					self.connect()
+					# self.connect()
+					return
 					continue
 			except socket.timeout as err:
 				rospy.logerr("Lost connection with the DVL, reinitiating the connection: {}".format(err))
-				self.connect()
+				# self.connect()
+				return
 				continue
 			raw_data = raw_data + rec
+
 		raw_data = raw_data.decode("utf-8") 
 		raw_data = self.oldJson + raw_data
 		self.oldJson = ''
